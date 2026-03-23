@@ -77,7 +77,7 @@
             label = "SYM";
             bindings = <
 &trans   &none        &none        &none        &none           &none              &kp GRAVE  &kp LBKT   &kp RBKT   &kp BSLH  &kp EQUAL &trans
-&trans   &none        &none        &none        &none           &none              &mkp MCLK  &mkp LCLK  &mkp RCLK  &mkp MB4      &mkp MB5     &trans
+&trans   &none        &none        &none        &none           &none              &mkp MCLK  &mkp LCLK  &mkp RCLK  &mkp MB4  &mkp MB5     &trans
 &trans   &none        &none        &none        &none           &none              &trans     &mkp RCLK  &trans     &trans    &trans    &trans
 &trans   &trans       &trans       &trans       &trans                             &trans     &trans                                    &trans
             >;
