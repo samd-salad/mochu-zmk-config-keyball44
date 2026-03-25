@@ -37,6 +37,10 @@ struct pixart_data {
     // the work structure holding the trigger job
     struct k_work trigger_work;
 
+    // polling timer (when no IRQ pin)
+    struct k_timer poll_timer;
+    struct k_work poll_work;
+
     // the work structure for delayable init steps
     struct k_work_delayable init_work;
     int async_init_step;

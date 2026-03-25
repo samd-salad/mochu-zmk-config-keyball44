@@ -747,7 +747,6 @@ static int pmw3360_report_data(const struct device *dev) {
 
 static void pmw3360_gpio_callback(const struct device *gpiob, struct gpio_callback *cb,
                                   uint32_t pins) {
-//    LOG_INF("In pwm3360_gpio_callback");
     struct pixart_data *data = CONTAINER_OF(cb, struct pixart_data, irq_gpio_cb);
     const struct device *dev = data->dev;
 
@@ -755,6 +754,17 @@ static void pmw3360_gpio_callback(const struct device *gpiob, struct gpio_callba
 
     // submit the real handler work
     k_work_submit(&data->trigger_work);
+}
+
+static void pmw3360_poll_handler(struct k_work *work) {
+    struct pixart_data *data = CONTAINER_OF(work, struct pixart_data, poll_work);
+    const struct device *dev = data->dev;
+    pmw3360_report_data(dev);
+}
+
+static void pmw3360_poll_timer_handler(struct k_timer *timer) {
+    struct pixart_data *data = CONTAINER_OF(timer, struct pixart_data, poll_timer);
+    k_work_submit(&data->poll_work);
 }
 
 static void pmw3360_work_callback(struct k_work *work) {
@@ -855,7 +865,14 @@ static void pmw3360_async_init(struct k_work *work) {
         if (data->async_init_step == ASYNC_INIT_STEP_COUNT) {
             data->ready = true; // sensor is ready to work
             LOG_INF("PMW3360 initialized");
-            set_interrupt(dev, true);
+            const struct pixart_config *config = dev->config;
+            if (config->irq_gpio.port != NULL) {
+                set_interrupt(dev, true);
+            } else {
+                // start polling at ~125Hz
+                k_timer_start(&data->poll_timer, K_MSEC(8), K_MSEC(8));
+                LOG_INF("PMW3360 polling started");
+            }
         } else {
             k_work_schedule(&data->init_work, K_MSEC(async_init_delay[data->async_init_step]));
         }
@@ -925,10 +942,16 @@ static int pmw3360_init(const struct device *dev) {
         return err;
     }
 
-    // init irq routine
-    err = pmw3360_init_irq(dev);
-    if (err) {
-        return err;
+    // init irq routine or polling
+    if (config->irq_gpio.port != NULL) {
+        err = pmw3360_init_irq(dev);
+        if (err) {
+            return err;
+        }
+    } else {
+        LOG_INF("No IRQ pin configured, using polling mode");
+        k_work_init(&data->poll_work, pmw3360_poll_handler);
+        k_timer_init(&data->poll_timer, pmw3360_poll_timer_handler, NULL);
     }
 
     // Setup delayable and non-blocking init jobs, including following steps:
@@ -1125,7 +1148,9 @@ static int pmw3360_init(const struct device *dev) {
     static int32_t scroll_layers##n[] = DT_PROP(DT_DRV_INST(n), scroll_layers);                    \
     static int32_t snipe_layers##n[] = DT_PROP(DT_DRV_INST(n), snipe_layers);                      \
     static const struct pixart_config config##n = {                                                \
-        .irq_gpio = GPIO_DT_SPEC_INST_GET(n, irq_gpios),                                           \
+        .irq_gpio = COND_CODE_1(DT_INST_NODE_HAS_PROP(n, irq_gpios),                                \
+                    (GPIO_DT_SPEC_INST_GET(n, irq_gpios)),                                         \
+                    ({0})),                                                                        \
         .bus =                                                                                     \
             {                                                                                      \
                 .bus = DEVICE_DT_GET(DT_INST_BUS(n)),                                              \

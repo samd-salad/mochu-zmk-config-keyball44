@@ -8,7 +8,7 @@ include: spi-device.yaml
 properties:
   irq-gpios:
     type: phandle-array
-    required: true
+    required: false
   scroll-layers:
     type: array
     default: []
