@@ -718,7 +718,7 @@ static int pmw3360_report_data(const struct device *dev) {
 //    }
 //#endif
 
-    if ((abs(x) > 1 || abs(y) > 1)) {
+    if (x != 0 || y != 0) {
         if (input_mode != SCROLL) {
             input_report_rel(dev, INPUT_REL_X, x, false, K_FOREVER);
             input_report_rel(dev, INPUT_REL_Y, y, true, K_FOREVER);
@@ -869,8 +869,8 @@ static void pmw3360_async_init(struct k_work *work) {
             if (config->irq_gpio.port != NULL) {
                 set_interrupt(dev, true);
             } else {
-                // start polling at ~125Hz
-                k_timer_start(&data->poll_timer, K_MSEC(8), K_MSEC(8));
+                // start polling at ~60Hz
+                k_timer_start(&data->poll_timer, K_MSEC(16), K_MSEC(16));
                 LOG_INF("PMW3360 polling started");
             }
         } else {
