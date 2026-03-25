@@ -678,13 +678,13 @@ static int pmw3360_report_data(const struct device *dev) {
         y = raw_x;
     }
 
-//    if (IS_ENABLED(CONFIG_PMW3360_INVERT_X)) {
-//        x = -x;
-//    }
-//
-//    if (IS_ENABLED(CONFIG_PMW3360_INVERT_Y)) {
-//        y = -y;
-//    }
+    if (IS_ENABLED(CONFIG_PMW3360_INVERT_X)) {
+        x = -x;
+    }
+
+    if (IS_ENABLED(CONFIG_PMW3360_INVERT_Y)) {
+        y = -y;
+    }
 
 //#ifdef CONFIG_PMW3610_SMART_ALGORITHM
 //    int16_t shutter =

@@ -59,6 +59,13 @@
 };
 
 / {
+  scroll_invert: scroll_invert {
+    compatible = "zmk,input-processor-transform";
+    #input-processor-cells = <0>;
+    x-invert;
+    y-invert;
+  };
+
   trackball_listener {
     compatible = "zmk,input-listener";
     device = <&trackball>;
@@ -66,7 +73,7 @@
     /* scroll mode on layer 3 */
     scroller {
         layers = <3>;
-        input-processors = <&zip_xy_scaler 1 3>, <&zip_xy_to_scroll_mapper>;
+        input-processors = <&zip_xy_scaler 1 5>, <&scroll_invert>, <&zip_xy_to_scroll_mapper>;
     };
 
     /* snipe/precision mode on layer 4 */
