@@ -1,11 +1,8 @@
 ---
 include:
-  - board: nice_nano/nrf52840/zmk
+  - board: nice_nano_v2
     shield: keyball44_left
-    artifact-name: keyball44_left-nice_nano_v2
-  - board: nice_nano/nrf52840/zmk
+  - board: nice_nano_v2
     shield: keyball44_right
-    artifact-name: keyball44_right-nice_nano_v2
-  - board: nice_nano/nrf52840/zmk
+  - board: nice_nano_v2
     shield: settings_reset
-    artifact-name: settings_reset-nice_nano_v2
