@@ -4,8 +4,8 @@ manifest:
       url-base: https://github.com/zmkfirmware
     - name: kumamuk-git
       url-base: https://github.com/kumamuk-git
-    - name: KOHSUK
-      url-base: https://github.com/KOHSUK
+    - name: Cuttlerat
+      url-base: https://github.com/Cuttlerat
   projects:
     - name: zmk
       remote: zmkfirmware
@@ -15,7 +15,7 @@ manifest:
       remote: kumamuk-git
       revision: main
     - name: zmk-pmw3360-driver
-      remote: KOHSUK
-      revision: pmw3360
+      remote: Cuttlerat
+      revision: main
   self:
     path: config
