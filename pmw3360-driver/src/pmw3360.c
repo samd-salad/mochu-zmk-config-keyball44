@@ -718,7 +718,7 @@ static int pmw3360_report_data(const struct device *dev) {
 //    }
 //#endif
 
-    if (x != 0 || y != 0) {
+    if ((abs(x) > 1 || abs(y) > 1)) {
         if (input_mode != SCROLL) {
             input_report_rel(dev, INPUT_REL_X, x, false, K_FOREVER);
             input_report_rel(dev, INPUT_REL_Y, y, true, K_FOREVER);
