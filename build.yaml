@@ -4,5 +4,6 @@ include:
     shield: keyball44_left
   - board: nice_nano_v2
     shield: keyball44_right
+    cmake-args: "-DZMK_EXTRA_MODULES;/__w/mochu-zmk-config-keyball44/mochu-zmk-config-keyball44/pmw3360-driver"
   - board: nice_nano_v2
     shield: settings_reset
