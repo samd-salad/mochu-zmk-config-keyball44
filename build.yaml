@@ -1,21 +1,11 @@
-# This file generates the GitHub Actions matrix
-# For simple board + shield combinations, add them
-# to the top level board and shield arrays, for more
-# control, add individual board + shield combinations to
-# the `include` property, e.g:
-#
-# board: [ "nice_nano/nrf52840/zmk" ]
-# shield: [ "corne_left", "corne_right" ]
-# include:
-#   - board: bdn9_rev2
-#   - board: nice_nano/nrf52840/zmk
-#     shield: reviung41
-#
 ---
 include:
   - board: nice_nano/nrf52840/zmk
     shield: keyball44_left
+    artifact-name: keyball44_left-nice_nano_v2
   - board: nice_nano/nrf52840/zmk
     shield: keyball44_right
+    artifact-name: keyball44_right-nice_nano_v2
   - board: nice_nano/nrf52840/zmk
     shield: settings_reset
+    artifact-name: settings_reset-nice_nano_v2
