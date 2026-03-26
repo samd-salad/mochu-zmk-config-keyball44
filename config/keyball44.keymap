@@ -50,6 +50,15 @@
         };
     };
 
+    combos {
+        compatible = "zmk,combos";
+        combo_soft_off {
+            timeout-ms = <50>;
+            key-positions = <40 41>;
+            bindings = <&soft_off>;
+        };
+    };
+
     keymap {
         compatible = "zmk,keymap";
 

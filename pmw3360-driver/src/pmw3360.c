@@ -723,23 +723,34 @@ static int pmw3360_report_data(const struct device *dev) {
             input_report_rel(dev, INPUT_REL_X, x, false, K_FOREVER);
             input_report_rel(dev, INPUT_REL_Y, y, true, K_FOREVER);
         }
-//        } else {
-//            data->scroll_delta_x += x;
-//            data->scroll_delta_y += y;
-//            if (abs(data->scroll_delta_y) > CONFIG_PMW3610_SCROLL_TICK) {
-//                input_report_rel(dev, INPUT_REL_WHEEL,
-//                                 data->scroll_delta_y > 0 ? PMW3610_SCROLL_Y_NEGATIVE : PMW3610_SCROLL_Y_POSITIVE,
-//                                 true, K_FOREVER);
-//                data->scroll_delta_x = 0;
-//                data->scroll_delta_y = 0;
-//            } else if (abs(data->scroll_delta_x) > CONFIG_PMW3610_SCROLL_TICK) {
-//                input_report_rel(dev, INPUT_REL_HWHEEL,
-//                                 data->scroll_delta_x > 0 ? PMW3610_SCROLL_X_NEGATIVE : PMW3610_SCROLL_X_POSITIVE,
-//                                 true, K_FOREVER);
-//                data->scroll_delta_x = 0;
-//                data->scroll_delta_y = 0;
-//            }
-//        }
+
+        /* motion detected — jump to active polling if not already */
+        if (data->poll_state != POLL_ACTIVE) {
+            data->poll_state = POLL_ACTIVE;
+            k_timer_start(&data->poll_timer,
+                          K_MSEC(POLL_ACTIVE_MS), K_MSEC(POLL_ACTIVE_MS));
+            LOG_DBG("poll → ACTIVE");
+        }
+        data->no_motion_count = 0;
+    } else {
+        /* no motion — consider stepping down */
+        data->no_motion_count++;
+
+        if (data->poll_state == POLL_ACTIVE &&
+            data->no_motion_count >= POLL_IDLE_THRESHOLD) {
+            data->poll_state = POLL_IDLE;
+            data->no_motion_count = 0;
+            k_timer_start(&data->poll_timer,
+                          K_MSEC(POLL_IDLE_MS), K_MSEC(POLL_IDLE_MS));
+            LOG_DBG("poll → IDLE");
+        } else if (data->poll_state == POLL_IDLE &&
+                   data->no_motion_count >= POLL_SLEEP_THRESHOLD) {
+            data->poll_state = POLL_SLEEP;
+            data->no_motion_count = 0;
+            k_timer_start(&data->poll_timer,
+                          K_MSEC(POLL_SLEEP_MS), K_MSEC(POLL_SLEEP_MS));
+            LOG_DBG("poll → SLEEP");
+        }
     }
 
     return err;
@@ -869,9 +880,12 @@ static void pmw3360_async_init(struct k_work *work) {
             if (config->irq_gpio.port != NULL) {
                 set_interrupt(dev, true);
             } else {
-                // start polling at ~60Hz
-                k_timer_start(&data->poll_timer, K_MSEC(16), K_MSEC(16));
-                LOG_INF("PMW3360 polling started");
+                // start polling at active rate
+                data->poll_state = POLL_ACTIVE;
+                data->no_motion_count = 0;
+                k_timer_start(&data->poll_timer,
+                              K_MSEC(POLL_ACTIVE_MS), K_MSEC(POLL_ACTIVE_MS));
+                LOG_INF("PMW3360 adaptive polling started (%d ms)", POLL_ACTIVE_MS);
             }
         } else {
             k_work_schedule(&data->init_work, K_MSEC(async_init_delay[data->async_init_step]));

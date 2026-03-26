@@ -17,6 +17,20 @@ extern "C" {
 
 enum pixart_input_mode { MOVE = 0, SCROLL, SNIPE };
 
+/* adaptive polling states */
+enum poll_state {
+    POLL_ACTIVE,  /* motion detected recently — full rate */
+    POLL_IDLE,    /* no motion for a while — reduced rate */
+    POLL_SLEEP,   /* no motion for a long time — minimal rate */
+};
+
+#define POLL_ACTIVE_MS  25   /* ~40 Hz */
+#define POLL_IDLE_MS    100  /* 10 Hz */
+#define POLL_SLEEP_MS   500  /* 2 Hz */
+
+#define POLL_IDLE_THRESHOLD   20  /* empty polls before ACTIVE→IDLE (~500ms) */
+#define POLL_SLEEP_THRESHOLD  30  /* empty polls before IDLE→SLEEP (~3s) */
+
 /* device data structure */
 struct pixart_data {
     const struct device *dev;
@@ -40,6 +54,10 @@ struct pixart_data {
     // polling timer (when no IRQ pin)
     struct k_timer poll_timer;
     struct k_work poll_work;
+
+    // adaptive polling
+    enum poll_state poll_state;
+    uint32_t no_motion_count;
 
     // the work structure for delayable init steps
     struct k_work_delayable init_work;
