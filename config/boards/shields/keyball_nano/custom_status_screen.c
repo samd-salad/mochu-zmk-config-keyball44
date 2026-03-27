@@ -152,7 +152,7 @@ static void rotate_and_flush(void) {
      */
     for (int vy = 0; vy < VIRT_H; vy++) {
         for (int vx = 0; vx < VIRT_W; vx++) {
-            display_buf[(DISP_H - 1 - vx) * DISP_W + vy] =
+            display_buf[vx * DISP_W + (DISP_W - 1 - vy)] =
                 virtual_buf[vy * VIRT_W + vx];
         }
     }
@@ -172,12 +172,12 @@ static void init_draw_dsc(void) {
 
     lv_draw_label_dsc_init(&lbl_center);
     lbl_center.color = lv_color_black();
-    lbl_center.font = &lv_font_montserrat_12;
+    lbl_center.font = &lv_font_montserrat_8;
     lbl_center.align = LV_TEXT_ALIGN_CENTER;
 
     lv_draw_label_dsc_init(&lbl_left);
     lbl_left.color = lv_color_black();
-    lbl_left.font = &lv_font_montserrat_12;
+    lbl_left.font = &lv_font_montserrat_8;
     lbl_left.align = LV_TEXT_ALIGN_LEFT;
 
     lv_draw_rect_dsc_init(&rect_black);
@@ -229,7 +229,7 @@ static void draw_screen(void) {
     {
         const char *pair_str = cur_split_connected ? "PAIR OK" : "PAIR --";
         lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, pair_str);
-        y += 14;
+        y += 10;
     }
 
     /* Row 3: USB/BT + profile + connection */
@@ -242,28 +242,28 @@ static void draw_screen(void) {
             snprintf(buf, sizeof(buf), "BT%d %s", cur_bt_profile + 1, st);
         }
         lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, buf);
-        y += 14;
+        y += 10;
     }
 
     /* Row 4: Layer name */
     {
         const char *name = (cur_layer_name && cur_layer_name[0]) ? cur_layer_name : "DEF";
         lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, name);
-        y += 14;
+        y += 10;
     }
 
     /* Row 5: Last key pressed */
     if (cur_key_str[0]) {
         lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, cur_key_str);
     }
-    y += 14;
+    y += 10;
 
     /* Row 6: WPM */
     {
         char buf[12];
         snprintf(buf, sizeof(buf), "%d WPM", cur_wpm);
         lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, buf);
-        y += 14;
+        y += 10;
     }
 
     /* Row 7: Caps / Num Lock indicators (only shown when active) */

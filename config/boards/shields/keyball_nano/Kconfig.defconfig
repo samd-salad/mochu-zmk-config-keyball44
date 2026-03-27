@@ -51,7 +51,7 @@ endchoice
 config LV_USE_CANVAS
     default y
 
-config LV_FONT_MONTSERRAT_12
+config LV_FONT_MONTSERRAT_8
     default y
 
 endif
