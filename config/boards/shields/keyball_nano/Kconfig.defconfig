@@ -27,6 +27,10 @@ choice ZMK_DISPLAY_WORK_QUEUE
     default ZMK_DISPLAY_WORK_QUEUE_DEDICATED
 endchoice
 
+choice ZMK_DISPLAY_STATUS_SCREEN
+    default ZMK_DISPLAY_STATUS_SCREEN_CUSTOM
+endchoice
+
 endif
 
 if LVGL
@@ -44,4 +48,10 @@ choice LV_COLOR_DEPTH
     default LV_COLOR_DEPTH_1
 endchoice
 
-endif 
+config LV_USE_CANVAS
+    default y
+
+config LV_FONT_MONTSERRAT_12
+    default y
+
+endif

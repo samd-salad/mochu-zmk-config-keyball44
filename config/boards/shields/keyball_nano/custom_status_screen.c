@@ -1,0 +1,389 @@
+/*
+ * Custom rotated status screen for Keyball44
+ *
+ * Renders widgets to a virtual 32x128 portrait canvas, then rotates 90°
+ * onto the physical 128x32 SSD1306 OLED (mounted sideways).
+ */
+
+#include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
+LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
+
+#include <zmk/display.h>
+#include <zmk/battery.h>
+#include <zmk/ble.h>
+#include <zmk/endpoints.h>
+#include <zmk/keymap.h>
+#include <zmk/event_manager.h>
+#include <zmk/events/battery_state_changed.h>
+#include <zmk/events/ble_active_profile_changed.h>
+#include <zmk/events/endpoint_changed.h>
+#include <zmk/events/layer_state_changed.h>
+#include <zmk/events/keycode_state_changed.h>
+#include <zmk/split/bluetooth/central.h>
+
+#include <lvgl.h>
+
+/* Virtual portrait canvas dimensions (drawn as if 32 wide x 128 tall) */
+#define VIRT_W 32
+#define VIRT_H 128
+
+/* Physical display dimensions */
+#define DISP_W 128
+#define DISP_H 32
+
+/* Canvas buffers */
+static lv_color_t virtual_buf[VIRT_W * VIRT_H];
+static lv_color_t display_buf[DISP_W * DISP_H];
+
+static lv_obj_t *virtual_canvas;
+static lv_obj_t *display_canvas;
+
+/* ---------- Current display state ---------- */
+
+static uint8_t cur_battery_pct = 0;
+static bool cur_split_connected = false;
+static bool cur_bt_connected = false;
+static bool cur_bt_bonded = false;
+static uint8_t cur_bt_profile = 0;
+static bool cur_usb_output = false;
+static const char *cur_layer_name = "";
+static char cur_key_str[8] = "";
+
+/* ---------- HID keycode to display string ---------- */
+
+static const char *hid_keycode_to_str(uint16_t usage_page, uint32_t keycode) {
+    /* Only handle standard keyboard usage page */
+    if (usage_page != 0x07) {
+        return "?";
+    }
+
+    /* Letters A-Z (0x04 - 0x1D) */
+    if (keycode >= 0x04 && keycode <= 0x1D) {
+        static char letter[2] = {0};
+        letter[0] = 'A' + (keycode - 0x04);
+        return letter;
+    }
+    /* Numbers 1-9 (0x1E - 0x26) */
+    if (keycode >= 0x1E && keycode <= 0x26) {
+        static char digit[2] = {0};
+        digit[0] = '1' + (keycode - 0x1E);
+        return digit;
+    }
+
+    switch (keycode) {
+    case 0x27: return "0";
+    case 0x28: return "RET";
+    case 0x29: return "ESC";
+    case 0x2A: return "BSPC";
+    case 0x2B: return "TAB";
+    case 0x2C: return "SPC";
+    case 0x2D: return "-";
+    case 0x2E: return "=";
+    case 0x2F: return "[";
+    case 0x30: return "]";
+    case 0x31: return "\\";
+    case 0x33: return ";";
+    case 0x34: return "'";
+    case 0x35: return "`";
+    case 0x36: return ",";
+    case 0x37: return ".";
+    case 0x38: return "/";
+    case 0x39: return "CAPS";
+    case 0x4A: return "HOME";
+    case 0x4B: return "PGUP";
+    case 0x4C: return "DEL";
+    case 0x4D: return "END";
+    case 0x4E: return "PGDN";
+    case 0x4F: return "RGHT";
+    case 0x50: return "LEFT";
+    case 0x51: return "DOWN";
+    case 0x52: return "UP";
+    /* Modifiers */
+    case 0xE0: return "LCTL";
+    case 0xE1: return "LSFT";
+    case 0xE2: return "LALT";
+    case 0xE3: return "LGUI";
+    case 0xE4: return "RCTL";
+    case 0xE5: return "RSFT";
+    case 0xE6: return "RALT";
+    case 0xE7: return "RGUI";
+    default:   return "?";
+    }
+}
+
+/* ---------- Drawing ---------- */
+
+static void rotate_and_flush(void) {
+    /*
+     * 90° CW rotation: virtual(vx, vy) → display(vy, 31 - vx)
+     * If the text appears upside-down on your display, change to:
+     *   display_buf[vx * DISP_W + (DISP_W - 1 - vy)]
+     */
+    for (int vy = 0; vy < VIRT_H; vy++) {
+        for (int vx = 0; vx < VIRT_W; vx++) {
+            display_buf[(DISP_H - 1 - vx) * DISP_W + vy] =
+                virtual_buf[vy * VIRT_W + vx];
+        }
+    }
+    lv_obj_invalidate(display_canvas);
+}
+
+static void draw_screen(void) {
+    lv_draw_label_dsc_t label_dsc;
+    lv_draw_label_dsc_init(&label_dsc);
+    label_dsc.color = lv_color_black();
+    label_dsc.font = &lv_font_montserrat_12;
+    label_dsc.align = LV_TEXT_ALIGN_CENTER;
+
+    lv_draw_label_dsc_t label_dsc_left;
+    lv_draw_label_dsc_init(&label_dsc_left);
+    label_dsc_left.color = lv_color_black();
+    label_dsc_left.font = &lv_font_montserrat_12;
+    label_dsc_left.align = LV_TEXT_ALIGN_LEFT;
+
+    lv_draw_rect_dsc_t rect_black;
+    lv_draw_rect_dsc_init(&rect_black);
+    rect_black.bg_color = lv_color_black();
+    rect_black.bg_opa = LV_OPA_COVER;
+    rect_black.radius = 0;
+    rect_black.border_width = 0;
+
+    lv_draw_rect_dsc_t rect_outline;
+    lv_draw_rect_dsc_init(&rect_outline);
+    rect_outline.bg_opa = LV_OPA_TRANSP;
+    rect_outline.border_color = lv_color_black();
+    rect_outline.border_width = 1;
+    rect_outline.radius = 1;
+
+    /* Clear canvas — white background */
+    lv_canvas_fill_bg(virtual_canvas, lv_color_white(), LV_OPA_COVER);
+
+    int y = 2;
+
+    /* ── Row 1: Battery ── */
+    /* Battery outline (small icon) */
+    lv_canvas_draw_rect(virtual_canvas, 2, y, 12, 8, &rect_outline);
+    /* Battery nub */
+    rect_black.radius = 0;
+    lv_canvas_draw_rect(virtual_canvas, 14, y + 2, 2, 4, &rect_black);
+    /* Battery fill */
+    int fill_w = (int)(10.0f * cur_battery_pct / 100.0f);
+    if (fill_w > 0) {
+        lv_canvas_draw_rect(virtual_canvas, 3, y + 1, fill_w, 6, &rect_black);
+    }
+    /* Percentage text */
+    char batt_text[8];
+    snprintf(batt_text, sizeof(batt_text), "%d%%", cur_battery_pct);
+    lv_canvas_draw_text(virtual_canvas, 18, y - 2, VIRT_W - 18, &label_dsc_left, batt_text);
+
+    y += 14;
+
+    /* ── Separator ── */
+    lv_canvas_draw_rect(virtual_canvas, 2, y, VIRT_W - 4, 1, &rect_black);
+    y += 5;
+
+    /* ── Row 2: Split pair status ── */
+    lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &label_dsc,
+                        cur_split_connected ? "PAIR" : "PAIR");
+    y += 14;
+    lv_canvas_draw_text(virtual_canvas, 0, y - 12, VIRT_W, &label_dsc,
+                        cur_split_connected ? "" : "");
+    /* Show a small indicator after text */
+    {
+        const char *pair_str = cur_split_connected ? "OK" : "--";
+        char pair_line[12];
+        snprintf(pair_line, sizeof(pair_line), "PAIR %s", pair_str);
+        /* Redraw the whole line properly */
+        lv_canvas_draw_rect(virtual_canvas, 0, y - 14, VIRT_W, 14,
+                            &(lv_draw_rect_dsc_t){
+                                .bg_color = lv_color_white(),
+                                .bg_opa = LV_OPA_COVER,
+                                .radius = 0,
+                                .border_width = 0,
+                            });
+        lv_canvas_draw_text(virtual_canvas, 0, y - 14, VIRT_W, &label_dsc, pair_line);
+    }
+
+    /* ── Separator ── */
+    lv_canvas_draw_rect(virtual_canvas, 2, y, VIRT_W - 4, 1, &rect_black);
+    y += 5;
+
+    /* ── Row 3: USB/BT + profile + connection ── */
+    {
+        char conn_line[16];
+        if (cur_usb_output) {
+            snprintf(conn_line, sizeof(conn_line), "USB");
+        } else {
+            const char *status = cur_bt_connected ? "*" : (cur_bt_bonded ? "o" : "?");
+            snprintf(conn_line, sizeof(conn_line), "BT%d %s", cur_bt_profile + 1, status);
+        }
+        lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &label_dsc, conn_line);
+    }
+    y += 18;
+
+    /* ── Separator ── */
+    lv_canvas_draw_rect(virtual_canvas, 2, y, VIRT_W - 4, 1, &rect_black);
+    y += 5;
+
+    /* ── Row 4: Layer name ── */
+    {
+        const char *name = (cur_layer_name && cur_layer_name[0]) ? cur_layer_name : "DEF";
+        lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &label_dsc, name);
+    }
+    y += 18;
+
+    /* ── Separator ── */
+    lv_canvas_draw_rect(virtual_canvas, 2, y, VIRT_W - 4, 1, &rect_black);
+    y += 5;
+
+    /* ── Row 5: Last key pressed ── */
+    if (cur_key_str[0]) {
+        lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &label_dsc, cur_key_str);
+    }
+
+    /* Rotate virtual portrait → physical landscape */
+    rotate_and_flush();
+}
+
+/* ---------- Battery listener ---------- */
+
+struct battery_state {
+    uint8_t level;
+    bool split_connected;
+};
+
+static void battery_update_cb(struct battery_state state) {
+    cur_battery_pct = state.level;
+    cur_split_connected = state.split_connected;
+    draw_screen();
+}
+
+static struct battery_state battery_get_state(const zmk_event_t *eh) {
+    uint8_t peripheral_level = 0;
+    bool split_ok = false;
+
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_CENTRAL_BATTERY_LEVEL_FETCHING)
+    split_ok = (zmk_split_get_peripheral_battery_level(0, &peripheral_level) == 0);
+#endif
+
+    return (struct battery_state){
+        .level = zmk_battery_state_of_charge(),
+        .split_connected = split_ok,
+    };
+}
+
+ZMK_DISPLAY_WIDGET_LISTENER(battery_listener, struct battery_state,
+                            battery_update_cb, battery_get_state)
+ZMK_SUBSCRIPTION(battery_listener, zmk_battery_state_changed);
+
+/* ---------- Layer listener ---------- */
+
+struct layer_state {
+    const char *label;
+};
+
+static void layer_update_cb(struct layer_state state) {
+    cur_layer_name = state.label;
+    draw_screen();
+}
+
+static struct layer_state layer_get_state(const zmk_event_t *eh) {
+    zmk_keymap_layer_index_t index = zmk_keymap_highest_layer_active();
+    return (struct layer_state){
+        .label = zmk_keymap_layer_name(zmk_keymap_layer_index_to_id(index)),
+    };
+}
+
+ZMK_DISPLAY_WIDGET_LISTENER(layer_listener, struct layer_state,
+                            layer_update_cb, layer_get_state)
+ZMK_SUBSCRIPTION(layer_listener, zmk_layer_state_changed);
+
+/* ---------- Output/BT listener ---------- */
+
+struct output_state {
+    uint8_t profile_index;
+    bool connected;
+    bool bonded;
+    bool usb;
+};
+
+static void output_update_cb(struct output_state state) {
+    cur_bt_profile = state.profile_index;
+    cur_bt_connected = state.connected;
+    cur_bt_bonded = state.bonded;
+    cur_usb_output = state.usb;
+    draw_screen();
+}
+
+static struct output_state output_get_state(const zmk_event_t *eh) {
+    struct zmk_endpoint_instance ep = zmk_endpoints_selected();
+    return (struct output_state){
+        .profile_index = zmk_ble_active_profile_index(),
+        .connected = zmk_ble_active_profile_is_connected(),
+        .bonded = !zmk_ble_active_profile_is_open(),
+        .usb = (ep.transport == ZMK_TRANSPORT_USB),
+    };
+}
+
+ZMK_DISPLAY_WIDGET_LISTENER(output_listener, struct output_state,
+                            output_update_cb, output_get_state)
+ZMK_SUBSCRIPTION(output_listener, zmk_ble_active_profile_changed);
+ZMK_SUBSCRIPTION(output_listener, zmk_endpoint_changed);
+
+/* ---------- Keycode listener ---------- */
+
+struct keycode_state {
+    uint16_t usage_page;
+    uint32_t keycode;
+    bool pressed;
+};
+
+static void keycode_update_cb(struct keycode_state state) {
+    if (state.pressed) {
+        const char *name = hid_keycode_to_str(state.usage_page, state.keycode);
+        strncpy(cur_key_str, name, sizeof(cur_key_str) - 1);
+        cur_key_str[sizeof(cur_key_str) - 1] = '\0';
+        draw_screen();
+    }
+}
+
+static struct keycode_state keycode_get_state(const zmk_event_t *eh) {
+    const struct zmk_keycode_state_changed *ev = as_zmk_keycode_state_changed(eh);
+    if (ev) {
+        return (struct keycode_state){
+            .usage_page = ev->usage_page,
+            .keycode = ev->keycode,
+            .pressed = ev->state,
+        };
+    }
+    return (struct keycode_state){0};
+}
+
+ZMK_DISPLAY_WIDGET_LISTENER(keycode_listener, struct keycode_state,
+                            keycode_update_cb, keycode_get_state)
+ZMK_SUBSCRIPTION(keycode_listener, zmk_keycode_state_changed);
+
+/* ---------- Screen entry point ---------- */
+
+lv_obj_t *zmk_display_status_screen(void) {
+    lv_obj_t *screen = lv_obj_create(NULL);
+
+    /* Hidden virtual canvas for portrait rendering */
+    virtual_canvas = lv_canvas_create(screen);
+    lv_canvas_set_buffer(virtual_canvas, virtual_buf, VIRT_W, VIRT_H, LV_IMG_CF_TRUE_COLOR);
+    lv_obj_add_flag(virtual_canvas, LV_OBJ_FLAG_HIDDEN);
+
+    /* Visible display canvas */
+    display_canvas = lv_canvas_create(screen);
+    lv_canvas_set_buffer(display_canvas, display_buf, DISP_W, DISP_H, LV_IMG_CF_TRUE_COLOR);
+    lv_obj_align(display_canvas, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    /* Init listeners — triggers first draw */
+    battery_listener_init();
+    layer_listener_init();
+    output_listener_init();
+    keycode_listener_init();
+
+    return screen;
+}
