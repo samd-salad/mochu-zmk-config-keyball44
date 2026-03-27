@@ -6,6 +6,7 @@
 
 #include "keyball44.dtsi"
 #include <input/processors.dtsi>
+#include <dt-bindings/zmk/input_transform.h>
 
 &default_transform {
     col-offset = <6>;
@@ -66,7 +67,7 @@
     /* scroll mode on layer 3 */
     scroller {
         layers = <3>;
-        input-processors = <&zip_x_scaler (-1) 5>, <&zip_y_scaler 1 5>, <&zip_xy_to_scroll_mapper>;
+        input-processors = <&zip_xy_scaler (-1) 5>, <&zip_xy_to_scroll_mapper>, <&zip_scroll_transform INPUT_TRANSFORM_X_INVERT>;
     };
 
     /* snipe/precision mode on layer 4 */

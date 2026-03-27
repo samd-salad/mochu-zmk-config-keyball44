@@ -73,6 +73,53 @@ static bool cur_usb_output = false;
 static const char *cur_layer_name = "";
 static char cur_key_str[8] = "";
 static uint8_t cur_wpm = 0;
+/*
+ * Rolling WPM: 15-minute window, 5-second buckets.
+ * Only buckets with 3+ keys count as "active typing" —
+ * occasional nav keys don't drag down the average.
+ */
+#define WPM_BUCKET_SEC    5
+#define WPM_BUCKET_COUNT  180   /* 180 × 5s = 15 minutes */
+#define WPM_MIN_KEYS      3    /* minimum keys in a bucket to count as typing */
+
+static uint8_t key_buckets[WPM_BUCKET_COUNT];
+static int bucket_idx = 0;
+static int64_t last_bucket_time = 0;
+
+static void advance_buckets(void) {
+    int64_t now = k_uptime_get();
+    if (last_bucket_time == 0) {
+        last_bucket_time = now;
+        return;
+    }
+    int elapsed = (int)((now - last_bucket_time) / (WPM_BUCKET_SEC * 1000));
+    if (elapsed <= 0) {
+        return;
+    }
+    for (int i = 0; i < elapsed && i < WPM_BUCKET_COUNT; i++) {
+        bucket_idx = (bucket_idx + 1) % WPM_BUCKET_COUNT;
+        key_buckets[bucket_idx] = 0;
+    }
+    last_bucket_time = now;
+}
+
+static uint8_t compute_rolling_wpm(void) {
+    int total_keys = 0;
+    int active_buckets = 0;
+    for (int i = 0; i < WPM_BUCKET_COUNT; i++) {
+        if (key_buckets[i] >= WPM_MIN_KEYS) {
+            total_keys += key_buckets[i];
+            active_buckets++;
+        }
+    }
+    if (active_buckets == 0) {
+        return 0;
+    }
+    int active_seconds = active_buckets * WPM_BUCKET_SEC;
+    /* WPM = (total_keys / 5 chars_per_word) * (60 / active_seconds) */
+    return (uint8_t)((total_keys * 12) / active_seconds);
+}
+
 static bool cur_caps_lock = false;
 static bool cur_num_lock = false;
 #else
@@ -172,12 +219,12 @@ static void init_draw_dsc(void) {
 
     lv_draw_label_dsc_init(&lbl_center);
     lbl_center.color = lv_color_black();
-    lbl_center.font = &lv_font_montserrat_8;
+    lbl_center.font = &lv_font_montserrat_10;
     lbl_center.align = LV_TEXT_ALIGN_CENTER;
 
     lv_draw_label_dsc_init(&lbl_left);
     lbl_left.color = lv_color_black();
-    lbl_left.font = &lv_font_montserrat_8;
+    lbl_left.font = &lv_font_montserrat_10;
     lbl_left.align = LV_TEXT_ALIGN_LEFT;
 
     lv_draw_rect_dsc_init(&rect_black);
@@ -193,21 +240,23 @@ static void init_draw_dsc(void) {
     rect_outline.radius = 1;
 }
 
-static int draw_battery_row(int y) {
-    /* Battery icon outline */
-    lv_canvas_draw_rect(virtual_canvas, 2, y, 12, 8, &rect_outline);
+static int draw_battery(int y) {
+    /* Battery icon: centered, 22px wide × 10px tall */
+    int icon_x = (VIRT_W - 24) / 2;
+    lv_canvas_draw_rect(virtual_canvas, icon_x, y, 20, 10, &rect_outline);
     /* Battery nub */
-    lv_canvas_draw_rect(virtual_canvas, 14, y + 2, 2, 4, &rect_black);
-    /* Battery fill */
-    int fill_w = 10 * cur_battery_pct / 100;
+    lv_canvas_draw_rect(virtual_canvas, icon_x + 20, y + 3, 3, 4, &rect_black);
+    /* Battery fill proportional to percentage */
+    int fill_w = 18 * cur_battery_pct / 100;
     if (fill_w > 0) {
-        lv_canvas_draw_rect(virtual_canvas, 3, y + 1, fill_w, 6, &rect_black);
+        lv_canvas_draw_rect(virtual_canvas, icon_x + 1, y + 1, fill_w, 8, &rect_black);
     }
-    /* Percentage text */
+    y += 12;
+    /* Percentage text on its own line */
     char buf[8];
     snprintf(buf, sizeof(buf), "%d%%", cur_battery_pct);
-    lv_canvas_draw_text(virtual_canvas, 18, y - 2, VIRT_W - 18, &lbl_left, buf);
-    return y + 14;
+    lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, buf);
+    return y + 12;
 }
 
 /* ================================================================
@@ -222,51 +271,48 @@ static void draw_screen(void) {
 
     int y = 2;
 
-    /* Row 1: Battery icon + percentage */
-    y = draw_battery_row(y);
+    /* Battery icon + percentage */
+    y = draw_battery(y);
+    y += 4;
 
-    /* Row 2: Split pair status */
+    /* Split pair status */
     {
-        const char *pair_str = cur_split_connected ? "PAIR OK" : "PAIR --";
-        lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, pair_str);
-        y += 10;
+        const char *st = cur_split_connected ? "OK" : "--";
+        lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, st);
+        y += 14;
     }
 
-    /* Row 3: USB/BT + profile + connection */
+    /* USB/BT + profile + connection */
     {
         char buf[16];
         if (cur_usb_output) {
             snprintf(buf, sizeof(buf), "USB");
         } else {
             const char *st = cur_bt_connected ? "*" : (cur_bt_bonded ? "o" : "?");
-            snprintf(buf, sizeof(buf), "BT%d %s", cur_bt_profile + 1, st);
+            snprintf(buf, sizeof(buf), "BT%d%s", cur_bt_profile + 1, st);
         }
         lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, buf);
-        y += 10;
+        y += 14;
     }
 
-    /* Row 4: Layer name */
+    /* Layer name */
     {
         const char *name = (cur_layer_name && cur_layer_name[0]) ? cur_layer_name : "DEF";
         lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, name);
-        y += 10;
+        y += 14;
     }
 
-    /* Row 5: Last key pressed */
-    if (cur_key_str[0]) {
-        lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, cur_key_str);
-    }
-    y += 10;
-
-    /* Row 6: WPM */
+    /* WPM: label then number */
+    lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, "WPM");
+    y += 12;
     {
-        char buf[12];
-        snprintf(buf, sizeof(buf), "%d WPM", cur_wpm);
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%d", cur_wpm);
         lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, buf);
-        y += 10;
+        y += 14;
     }
 
-    /* Row 7: Caps / Num Lock indicators (only shown when active) */
+    /* Caps / Num Lock indicators (only when active) */
     if (cur_caps_lock || cur_num_lock) {
         char buf[12] = "";
         if (cur_caps_lock && cur_num_lock) {
@@ -277,6 +323,11 @@ static void draw_screen(void) {
             snprintf(buf, sizeof(buf), "NUM");
         }
         lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, buf);
+    }
+
+    /* Last key pressed — pinned to bottom */
+    if (cur_key_str[0]) {
+        lv_canvas_draw_text(virtual_canvas, 0, VIRT_H - 12, VIRT_W, &lbl_center, cur_key_str);
     }
 
     rotate_and_flush();
@@ -290,12 +341,13 @@ static void draw_screen(void) {
 
     int y = 2;
 
-    /* Row 1: Battery */
-    y = draw_battery_row(y);
+    /* Battery icon + percentage */
+    y = draw_battery(y);
+    y += 4;
 
-    /* Row 2: Connection to central */
+    /* Connection to central */
     {
-        const char *st = cur_periph_connected ? "LINK OK" : "LINK --";
+        const char *st = cur_periph_connected ? "OK" : "--";
         lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, st);
     }
 
@@ -435,6 +487,11 @@ static void keycode_update_cb(struct keycode_state state) {
         const char *name = hid_keycode_to_str(state.usage_page, state.keycode);
         strncpy(cur_key_str, name, sizeof(cur_key_str) - 1);
         cur_key_str[sizeof(cur_key_str) - 1] = '\0';
+        /* Record key press into rolling WPM bucket */
+        advance_buckets();
+        if (key_buckets[bucket_idx] < 255) {
+            key_buckets[bucket_idx]++;
+        }
         draw_screen();
     }
 }
@@ -464,7 +521,9 @@ struct wpm_state {
 };
 
 static void wpm_update_cb(struct wpm_state state) {
-    cur_wpm = state.wpm;
+    /* Ignore ZMK's raw WPM — use our rolling average instead */
+    advance_buckets();
+    cur_wpm = compute_rolling_wpm();
     draw_screen();
 }
 
