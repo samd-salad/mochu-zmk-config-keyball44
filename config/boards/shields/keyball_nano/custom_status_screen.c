@@ -271,9 +271,16 @@ static void draw_screen(void) {
 
     int y = 4;
 
-    /* Battery icon */
+    /* Battery icon + percentage */
     y = draw_battery(y);
     y += 6;
+
+    /* Split pair status */
+    {
+        const char *st = cur_split_connected ? "OK" : "--";
+        lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, st);
+        y += 14;
+    }
 
     /* BT/USB + profile (+ x if disconnected) */
     {
@@ -286,21 +293,14 @@ static void draw_screen(void) {
             snprintf(buf, sizeof(buf), "BT %d x", cur_bt_profile + 1);
         }
         lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, buf);
-        y += 16;
-    }
-
-    /* Split pair status */
-    {
-        const char *st = cur_split_connected ? "OK" : "--";
-        lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, st);
-        y += 16;
+        y += 14;
     }
 
     /* Layer name */
     {
         const char *name = (cur_layer_name && cur_layer_name[0]) ? cur_layer_name : "KBR";
         lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, name);
-        y += 16;
+        y += 14;
     }
 
     /* WPM number */
@@ -308,7 +308,13 @@ static void draw_screen(void) {
         char buf[8];
         snprintf(buf, sizeof(buf), "%d", cur_wpm);
         lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, buf);
-        y += 16;
+        y += 14;
+    }
+
+    /* Last key pressed */
+    if (cur_key_str[0]) {
+        lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, cur_key_str);
+        y += 14;
     }
 
     /* Caps / Num Lock indicators (only when active) */
@@ -331,17 +337,15 @@ static void draw_screen(void) {
     init_draw_dsc();
     lv_canvas_fill_bg(virtual_canvas, lv_color_white(), LV_OPA_COVER);
 
-    int y = 2;
+    int y = 4;
 
     /* Battery icon + percentage */
     y = draw_battery(y);
-    y += 4;
+    y += 6;
 
     /* Connection to central */
-    {
-        const char *st = cur_periph_connected ? "OK" : "--";
-        lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, st);
-    }
+    lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center,
+                        cur_periph_connected ? "OK" : "--");
 
     rotate_and_flush();
 }
