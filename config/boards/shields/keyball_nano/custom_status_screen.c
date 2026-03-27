@@ -269,65 +269,57 @@ static void draw_screen(void) {
     init_draw_dsc();
     lv_canvas_fill_bg(virtual_canvas, lv_color_white(), LV_OPA_COVER);
 
-    int y = 2;
+    int y = 4;
 
-    /* Battery icon + percentage */
+    /* Battery icon */
     y = draw_battery(y);
-    y += 4;
+    y += 6;
+
+    /* BT/USB + profile (+ x if disconnected) */
+    {
+        char buf[16];
+        if (cur_usb_output) {
+            snprintf(buf, sizeof(buf), "USB");
+        } else if (cur_bt_connected) {
+            snprintf(buf, sizeof(buf), "BT %d", cur_bt_profile + 1);
+        } else {
+            snprintf(buf, sizeof(buf), "BT %d x", cur_bt_profile + 1);
+        }
+        lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, buf);
+        y += 16;
+    }
 
     /* Split pair status */
     {
         const char *st = cur_split_connected ? "OK" : "--";
         lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, st);
-        y += 14;
-    }
-
-    /* USB/BT + profile + connection */
-    {
-        char buf[16];
-        if (cur_usb_output) {
-            snprintf(buf, sizeof(buf), "USB");
-        } else {
-            const char *st = cur_bt_connected ? "*" : (cur_bt_bonded ? "o" : "?");
-            snprintf(buf, sizeof(buf), "BT%d%s", cur_bt_profile + 1, st);
-        }
-        lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, buf);
-        y += 14;
+        y += 16;
     }
 
     /* Layer name */
     {
-        const char *name = (cur_layer_name && cur_layer_name[0]) ? cur_layer_name : "DEF";
+        const char *name = (cur_layer_name && cur_layer_name[0]) ? cur_layer_name : "KBR";
         lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, name);
-        y += 14;
+        y += 16;
     }
 
-    /* WPM: label then number */
-    lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, "WPM");
-    y += 12;
+    /* WPM number */
     {
         char buf[8];
         snprintf(buf, sizeof(buf), "%d", cur_wpm);
         lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, buf);
-        y += 14;
+        y += 16;
     }
 
     /* Caps / Num Lock indicators (only when active) */
     if (cur_caps_lock || cur_num_lock) {
-        char buf[12] = "";
         if (cur_caps_lock && cur_num_lock) {
-            snprintf(buf, sizeof(buf), "CAP NUM");
+            lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, "CAP NUM");
         } else if (cur_caps_lock) {
-            snprintf(buf, sizeof(buf), "CAPS");
+            lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, "CAPS");
         } else {
-            snprintf(buf, sizeof(buf), "NUM");
+            lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, "NUM");
         }
-        lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, buf);
-    }
-
-    /* Last key pressed — pinned to bottom */
-    if (cur_key_str[0]) {
-        lv_canvas_draw_text(virtual_canvas, 0, VIRT_H - 12, VIRT_W, &lbl_center, cur_key_str);
     }
 
     rotate_and_flush();
