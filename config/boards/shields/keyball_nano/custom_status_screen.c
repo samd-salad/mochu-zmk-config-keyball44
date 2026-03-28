@@ -73,11 +73,7 @@ static bool cur_usb_output = false;
 static const char *cur_layer_name = "";
 static char cur_key_str[8] = "";
 static uint8_t cur_wpm = 0;
-/*
- * Rolling WPM: 15-minute window, 5-second buckets.
- * Only buckets with 3+ keys count as "active typing" —
- * occasional nav keys don't drag down the average.
- */
+/* Rolling WPM: 15-minute window, 1-second buckets for accurate timing. */
 #define WPM_BUCKET_SEC    1
 #define WPM_BUCKET_COUNT  900   /* 900 × 1s = 15 minutes */
 #define WPM_MIN_KEYS      1    /* any key activity counts at 1s granularity */
@@ -195,6 +191,8 @@ static const char *hid_keycode_to_str(uint16_t usage_page, uint32_t keycode) {
 #define DRAW_MIN_INTERVAL_MS 200
 static int64_t last_draw_time = 0;
 static bool draw_pending = false;
+
+static void draw_screen(void);
 
 static void request_draw(void) {
     int64_t now = k_uptime_get();
