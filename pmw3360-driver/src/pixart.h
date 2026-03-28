@@ -24,7 +24,7 @@ enum poll_state {
     POLL_SLEEP,   /* no motion for a long time — minimal rate */
 };
 
-#define POLL_ACTIVE_MS  25   /* ~40 Hz */
+#define POLL_ACTIVE_MS  16   /* ~60 Hz */
 #define POLL_IDLE_MS    100  /* 10 Hz */
 #define POLL_SLEEP_MS   500  /* 2 Hz */
 

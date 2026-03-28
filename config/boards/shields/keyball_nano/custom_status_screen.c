@@ -78,9 +78,9 @@ static uint8_t cur_wpm = 0;
  * Only buckets with 3+ keys count as "active typing" —
  * occasional nav keys don't drag down the average.
  */
-#define WPM_BUCKET_SEC    5
-#define WPM_BUCKET_COUNT  180   /* 180 × 5s = 15 minutes */
-#define WPM_MIN_KEYS      3    /* minimum keys in a bucket to count as typing */
+#define WPM_BUCKET_SEC    1
+#define WPM_BUCKET_COUNT  900   /* 900 × 1s = 15 minutes */
+#define WPM_MIN_KEYS      1    /* any key activity counts at 1s granularity */
 
 static uint8_t key_buckets[WPM_BUCKET_COUNT];
 static int bucket_idx = 0;
@@ -190,6 +190,22 @@ static const char *hid_keycode_to_str(uint16_t usage_page, uint32_t keycode) {
 /* ================================================================
  * Drawing helpers
  * ================================================================ */
+
+/* Throttle redraws to max ~5/sec to save I2C + CPU */
+#define DRAW_MIN_INTERVAL_MS 200
+static int64_t last_draw_time = 0;
+static bool draw_pending = false;
+
+static void request_draw(void) {
+    int64_t now = k_uptime_get();
+    if (now - last_draw_time >= DRAW_MIN_INTERVAL_MS) {
+        draw_screen();
+        last_draw_time = now;
+        draw_pending = false;
+    } else {
+        draw_pending = true;
+    }
+}
 
 static void rotate_and_flush(void) {
     /*
@@ -368,7 +384,7 @@ static void battery_update_cb(struct battery_state state) {
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
     cur_split_connected = state.split_connected;
 #endif
-    draw_screen();
+    request_draw();
 }
 
 static struct battery_state battery_get_state(const zmk_event_t *eh) {
@@ -398,7 +414,7 @@ struct periph_conn_state {
 
 static void periph_conn_update_cb(struct periph_conn_state state) {
     cur_periph_connected = state.connected;
-    draw_screen();
+    request_draw();
 }
 
 static struct periph_conn_state periph_conn_get_state(const zmk_event_t *eh) {
@@ -426,7 +442,7 @@ struct layer_state {
 
 static void layer_update_cb(struct layer_state state) {
     cur_layer_name = state.label;
-    draw_screen();
+    request_draw();
 }
 
 static struct layer_state layer_get_state(const zmk_event_t *eh) {
@@ -453,7 +469,7 @@ static void output_update_cb(struct output_state state) {
     cur_bt_connected = state.connected;
     cur_bt_bonded = state.bonded;
     cur_usb_output = state.usb;
-    draw_screen();
+    request_draw();
 }
 
 static struct output_state output_get_state(const zmk_event_t *eh) {
@@ -488,7 +504,7 @@ static void keycode_update_cb(struct keycode_state state) {
         if (key_buckets[bucket_idx] < 255) {
             key_buckets[bucket_idx]++;
         }
-        draw_screen();
+        request_draw();
     }
 }
 
@@ -520,7 +536,10 @@ static void wpm_update_cb(struct wpm_state state) {
     /* Ignore ZMK's raw WPM — use our rolling average instead */
     advance_buckets();
     cur_wpm = compute_rolling_wpm();
+    /* Always draw here (1s tick) — also flushes any pending throttled draws */
     draw_screen();
+    last_draw_time = k_uptime_get();
+    draw_pending = false;
 }
 
 static struct wpm_state wpm_get_state(const zmk_event_t *eh) {
@@ -542,7 +561,7 @@ struct indicator_state {
 static void indicator_update_cb(struct indicator_state state) {
     cur_caps_lock = state.caps;
     cur_num_lock = state.num;
-    draw_screen();
+    request_draw();
 }
 
 static struct indicator_state indicator_get_state(const zmk_event_t *eh) {
