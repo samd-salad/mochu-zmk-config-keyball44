@@ -71,7 +71,12 @@ static uint8_t cur_bt_profile = 0;
 static bool cur_usb_output = false;
 static const char *cur_layer_name = "";
 static char cur_key_str[8] = "";
-static bool cur_display_blanked = true; /* starts blanked — DEFAULT layer has display off */
+static bool cur_display_blanked = false; /* actual blanking state */
+static uint8_t cur_layer_index = 0;
+static int64_t conn_change_time = 0; /* timestamp of last BT connect/profile change */
+#define CONN_DISPLAY_DURATION_MS 60000 /* show display for 60s after connection event */
+static void conn_timer_handler(struct k_timer *timer);
+K_TIMER_DEFINE(conn_display_timer, conn_timer_handler, NULL);
 static bool cur_caps_lock = false;
 static bool cur_num_lock = false;
 #else
@@ -182,6 +187,40 @@ static lv_draw_label_dsc_t lbl_left;
 static lv_draw_rect_dsc_t rect_black;
 static lv_draw_rect_dsc_t rect_outline;
 static bool dsc_inited = false;
+
+static void conn_timer_handler(struct k_timer *timer) {
+    /* Timer expired — re-evaluate blanking (conn window has closed) */
+    update_display_blanking();
+}
+
+/* Determine if display should be on:
+ * - ON if on NUM layer
+ * - ON if BT not connected (need to see pairing status)
+ * - ON for 60s after BT connect or profile change
+ * - OFF otherwise */
+static bool should_display_be_on(void) {
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
+    if (cur_layer_index == 1) return true; /* NUM layer */
+    if (!cur_bt_connected && !cur_usb_output) return true;
+    if (conn_change_time > 0 &&
+        (k_uptime_get() - conn_change_time) < CONN_DISPLAY_DURATION_MS) return true;
+#endif
+    return false;
+}
+
+static void update_display_blanking(void) {
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
+    const struct device *disp = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
+    bool want_on = should_display_be_on();
+    if (want_on && cur_display_blanked) {
+        display_blanking_off(disp);
+        cur_display_blanked = false;
+    } else if (!want_on && !cur_display_blanked) {
+        display_blanking_on(disp);
+        cur_display_blanked = true;
+    }
+#endif
+}
 
 static void init_draw_dsc(void) {
     if (dsc_inited) return;
@@ -389,17 +428,8 @@ struct layer_state {
 
 static void layer_update_cb(struct layer_state state) {
     cur_layer_name = state.label;
-
-    /* Display off on DEFAULT (0), on for any other layer */
-    const struct device *disp = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
-    if (state.index != 0 && cur_display_blanked) {
-        display_blanking_off(disp);
-        cur_display_blanked = false;
-    } else if (state.index == 0 && !cur_display_blanked) {
-        display_blanking_on(disp);
-        cur_display_blanked = true;
-    }
-
+    cur_layer_index = state.index;
+    update_display_blanking();
     request_draw();
 }
 
@@ -424,10 +454,18 @@ struct output_state {
 };
 
 static void output_update_cb(struct output_state state) {
+    /* Detect connection or profile change — start 60s display timer */
+    if (state.connected != cur_bt_connected ||
+        state.profile_index != cur_bt_profile) {
+        conn_change_time = k_uptime_get();
+        k_timer_start(&conn_display_timer,
+                      K_MSEC(CONN_DISPLAY_DURATION_MS), K_NO_WAIT);
+    }
     cur_bt_profile = state.profile_index;
     cur_bt_connected = state.connected;
     cur_bt_bonded = state.bonded;
     cur_usb_output = state.usb;
+    update_display_blanking();
     request_draw();
 }
 
@@ -532,6 +570,11 @@ lv_obj_t *zmk_display_status_screen(void) {
     output_listener_init();
     keycode_listener_init();
     indicator_listener_init();
+
+    /* Show display for first 60s after boot (connection settling) */
+    conn_change_time = k_uptime_get();
+    k_timer_start(&conn_display_timer,
+                  K_MSEC(CONN_DISPLAY_DURATION_MS), K_NO_WAIT);
 #else
     periph_conn_listener_init();
 #endif
