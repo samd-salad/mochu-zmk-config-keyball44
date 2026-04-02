@@ -188,6 +188,8 @@ static lv_draw_rect_dsc_t rect_black;
 static lv_draw_rect_dsc_t rect_outline;
 static bool dsc_inited = false;
 
+static void update_display_blanking(void);
+
 static void conn_timer_handler(struct k_timer *timer) {
     /* Timer expired — re-evaluate blanking (conn window has closed) */
     update_display_blanking();
