@@ -15,6 +15,7 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
+#include <zephyr/drivers/display.h>
 #include <zmk/display.h>
 #include <zmk/battery.h>
 #include <zmk/event_manager.h>
@@ -24,13 +25,11 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/ble.h>
 #include <zmk/endpoints.h>
 #include <zmk/keymap.h>
-#include <zmk/wpm.h>
 #include <zmk/hid_indicators.h>
 #include <zmk/events/ble_active_profile_changed.h>
 #include <zmk/events/endpoint_changed.h>
 #include <zmk/events/layer_state_changed.h>
 #include <zmk/events/keycode_state_changed.h>
-#include <zmk/events/wpm_state_changed.h>
 #include <zmk/events/hid_indicators_changed.h>
 #include <zmk/split/bluetooth/central.h>
 #endif
@@ -72,50 +71,7 @@ static uint8_t cur_bt_profile = 0;
 static bool cur_usb_output = false;
 static const char *cur_layer_name = "";
 static char cur_key_str[8] = "";
-static uint8_t cur_wpm = 0;
-/* Rolling WPM: 15-minute window, 1-second buckets for accurate timing. */
-#define WPM_BUCKET_SEC    1
-#define WPM_BUCKET_COUNT  900   /* 900 × 1s = 15 minutes */
-#define WPM_MIN_KEYS      1    /* any key activity counts at 1s granularity */
-
-static uint8_t key_buckets[WPM_BUCKET_COUNT];
-static int bucket_idx = 0;
-static int64_t last_bucket_time = 0;
-
-static void advance_buckets(void) {
-    int64_t now = k_uptime_get();
-    if (last_bucket_time == 0) {
-        last_bucket_time = now;
-        return;
-    }
-    int elapsed = (int)((now - last_bucket_time) / (WPM_BUCKET_SEC * 1000));
-    if (elapsed <= 0) {
-        return;
-    }
-    for (int i = 0; i < elapsed && i < WPM_BUCKET_COUNT; i++) {
-        bucket_idx = (bucket_idx + 1) % WPM_BUCKET_COUNT;
-        key_buckets[bucket_idx] = 0;
-    }
-    last_bucket_time = now;
-}
-
-static uint8_t compute_rolling_wpm(void) {
-    int total_keys = 0;
-    int active_buckets = 0;
-    for (int i = 0; i < WPM_BUCKET_COUNT; i++) {
-        if (key_buckets[i] >= WPM_MIN_KEYS) {
-            total_keys += key_buckets[i];
-            active_buckets++;
-        }
-    }
-    if (active_buckets == 0) {
-        return 0;
-    }
-    int active_seconds = active_buckets * WPM_BUCKET_SEC;
-    /* WPM = (total_keys / 5 chars_per_word) * (60 / active_seconds) */
-    return (uint8_t)((total_keys * 12) / active_seconds);
-}
-
+static bool cur_display_blanked = true; /* starts blanked — DEFAULT layer has display off */
 static bool cur_caps_lock = false;
 static bool cur_num_lock = false;
 #else
@@ -317,14 +273,6 @@ static void draw_screen(void) {
         y += 14;
     }
 
-    /* WPM number */
-    {
-        char buf[8];
-        snprintf(buf, sizeof(buf), "%d", cur_wpm);
-        lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, buf);
-        y += 14;
-    }
-
     /* Last key pressed */
     if (cur_key_str[0]) {
         lv_canvas_draw_text(virtual_canvas, 0, y, VIRT_W, &lbl_center, cur_key_str);
@@ -433,13 +381,25 @@ ZMK_SUBSCRIPTION(periph_conn_listener, zmk_split_peripheral_status_changed);
 
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
 
-/* --- Layer --- */
+/* --- Layer (also controls display blanking) --- */
 struct layer_state {
     const char *label;
+    uint8_t index;
 };
 
 static void layer_update_cb(struct layer_state state) {
     cur_layer_name = state.label;
+
+    /* Display off on DEFAULT (0), on for any other layer */
+    const struct device *disp = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
+    if (state.index != 0 && cur_display_blanked) {
+        display_blanking_off(disp);
+        cur_display_blanked = false;
+    } else if (state.index == 0 && !cur_display_blanked) {
+        display_blanking_on(disp);
+        cur_display_blanked = true;
+    }
+
     request_draw();
 }
 
@@ -447,6 +407,7 @@ static struct layer_state layer_get_state(const zmk_event_t *eh) {
     zmk_keymap_layer_index_t index = zmk_keymap_highest_layer_active();
     return (struct layer_state){
         .label = zmk_keymap_layer_name(zmk_keymap_layer_index_to_id(index)),
+        .index = index,
     };
 }
 
@@ -497,11 +458,6 @@ static void keycode_update_cb(struct keycode_state state) {
         const char *name = hid_keycode_to_str(state.usage_page, state.keycode);
         strncpy(cur_key_str, name, sizeof(cur_key_str) - 1);
         cur_key_str[sizeof(cur_key_str) - 1] = '\0';
-        /* Record key press into rolling WPM bucket */
-        advance_buckets();
-        if (key_buckets[bucket_idx] < 255) {
-            key_buckets[bucket_idx]++;
-        }
         request_draw();
     }
 }
@@ -524,31 +480,6 @@ static struct keycode_state keycode_get_state(const zmk_event_t *eh) {
 ZMK_DISPLAY_WIDGET_LISTENER(keycode_listener, struct keycode_state,
                             keycode_update_cb, keycode_get_state)
 ZMK_SUBSCRIPTION(keycode_listener, zmk_keycode_state_changed);
-
-/* --- WPM --- */
-struct wpm_state {
-    uint8_t wpm;
-};
-
-static void wpm_update_cb(struct wpm_state state) {
-    /* Ignore ZMK's raw WPM — use our rolling average instead */
-    advance_buckets();
-    cur_wpm = compute_rolling_wpm();
-    /* Always draw here (1s tick) — also flushes any pending throttled draws */
-    draw_screen();
-    last_draw_time = k_uptime_get();
-    draw_pending = false;
-}
-
-static struct wpm_state wpm_get_state(const zmk_event_t *eh) {
-    return (struct wpm_state){
-        .wpm = (uint8_t)zmk_wpm_get_state(),
-    };
-}
-
-ZMK_DISPLAY_WIDGET_LISTENER(wpm_listener, struct wpm_state,
-                            wpm_update_cb, wpm_get_state)
-ZMK_SUBSCRIPTION(wpm_listener, zmk_wpm_state_changed);
 
 /* --- HID Indicators (Caps Lock, Num Lock) --- */
 struct indicator_state {
@@ -600,7 +531,6 @@ lv_obj_t *zmk_display_status_screen(void) {
     layer_listener_init();
     output_listener_init();
     keycode_listener_init();
-    wpm_listener_init();
     indicator_listener_init();
 #else
     periph_conn_listener_init();
