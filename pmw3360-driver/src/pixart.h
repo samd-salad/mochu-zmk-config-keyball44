@@ -26,7 +26,7 @@ enum poll_state {
 
 #define POLL_ACTIVE_MS  16   /* ~60 Hz */
 #define POLL_IDLE_MS    100  /* 10 Hz */
-#define POLL_SLEEP_MS   500  /* 2 Hz */
+#define POLL_SLEEP_MS   250  /* 4 Hz — lower wake latency for scroll */
 
 #define POLL_IDLE_THRESHOLD   20  /* empty polls before ACTIVE→IDLE (~500ms) */
 #define POLL_SLEEP_THRESHOLD  30  /* empty polls before IDLE→SLEEP (~3s) */
@@ -82,6 +82,9 @@ struct pixart_config {
     size_t snipe_layers_len;
     int32_t *snipe_layers;
 };
+
+/** Force the sensor into POLL_ACTIVE state immediately (e.g., on layer change). */
+void pmw3360_force_wake(const struct device *dev);
 
 #ifdef __cplusplus
 }

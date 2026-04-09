@@ -19,6 +19,10 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/display.h>
 #include <zmk/battery.h>
 #include <zmk/event_manager.h>
+
+#if IS_ENABLED(CONFIG_PMW3360)
+extern void pmw3360_force_wake(const struct device *dev);
+#endif
 #include <zmk/events/battery_state_changed.h>
 
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
@@ -431,6 +435,17 @@ struct layer_state {
 static void layer_update_cb(struct layer_state state) {
     cur_layer_name = state.label;
     cur_layer_index = state.index;
+
+#if IS_ENABLED(CONFIG_PMW3360)
+    /* Wake trackball immediately on FUN layer (scroll mode) */
+    if (state.index == 3) {
+        const struct device *trackball = DEVICE_DT_GET(DT_NODELABEL(trackball));
+        if (device_is_ready(trackball)) {
+            pmw3360_force_wake(trackball);
+        }
+    }
+#endif
+
     update_display_blanking();
     request_draw();
 }

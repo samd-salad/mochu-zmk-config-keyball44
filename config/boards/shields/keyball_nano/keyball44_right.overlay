@@ -67,7 +67,7 @@
     /* scroll mode on layer 3 */
     scroller {
         layers = <3>;
-        input-processors = <&zip_xy_scaler (-1) 5>, <&zip_xy_to_scroll_mapper>, <&zip_scroll_transform INPUT_TRANSFORM_X_INVERT>;
+        input-processors = <&zip_xy_scaler (-1) 10>, <&zip_xy_to_scroll_mapper>, <&zip_scroll_transform INPUT_TRANSFORM_X_INVERT>;
     };
 
     /* snipe/precision mode on layer 4 */

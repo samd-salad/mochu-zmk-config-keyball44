@@ -1157,6 +1157,15 @@ static int pmw3360_init(const struct device *dev) {
 //    return err;
 //}
 
+void pmw3360_force_wake(const struct device *dev) {
+    struct pixart_data *data = dev->data;
+    if (!data->ready) return;
+    data->poll_state = POLL_ACTIVE;
+    data->no_motion_count = 0;
+    k_timer_start(&data->poll_timer,
+                  K_NO_WAIT, K_MSEC(POLL_ACTIVE_MS));
+}
+
 #define PMW3360_DEFINE(n)                                                                          \
     static struct pixart_data data##n;                                                             \
     static int32_t scroll_layers##n[] = DT_PROP(DT_DRV_INST(n), scroll_layers);                    \
